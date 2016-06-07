@@ -1,6 +1,6 @@
 # Salt.fetch
 
-A natty semantic data-fetching tool for project that no longer needs to use jQuery/Zepto's Ajax.
+独立的`ajax/jsonp`模块。`Salt.fetch`底层由[NattyFetch](https://github.com/Jias/natty-fetch)实现。为了给`Salt`的使用者提供一致的开发体验，故将`NattyFetch`工具已`fetch`属性的方式集成在`Salt`命名空间下。
 
 ## 特点
 
