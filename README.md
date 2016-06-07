@@ -321,6 +321,42 @@ DB.City.getSuggestion({key:'ab'}).then(...); // 响应
 
 钩子函数，会在请求执行前调用。
 
+##### plugins
+
+* 类型：Array
+* 默认：[]
+
+配置插件，详见下面插件一节。
+
+## 插件
+
+假设有一个自动补全输入框，当每次有新的字符输入时，都会向服务端发起新请求，取得匹配的备选列表，当有字符删除时，那么再次发起的请求其实是可以利用缓存来加速的，因为之前已经请求过。
+
+```js
+// 引入fetch的storage插件
+const storage = require('salt-fetch-storage');
+// 配置带有缓存插件的接口
+DBContext.create('City', {
+    getSuggestion: {
+        url: 'api/getCitySuggestion',
+        // 开启session级别的接口数据缓存
+        plugins: [
+            storage({
+        	      type: 'sessionStorage',
+        	      key: 'city'
+            })
+        ]
+    }
+});
+
+// 请求a并缓存
+DB.City.getSuggestion({key:'a'}).then(...);
+// 请求ab并缓存
+DB.City.getSuggestion({key:'ab'}).then(...);
+// 删除一个字符，直接使用a的数据，并不会发起网络请求
+DB.City.getSuggestion({key:'a'}).then(...);
+```
+
 ## 编码约定
 
 #### 数据结构约定
