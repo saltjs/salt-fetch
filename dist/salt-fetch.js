@@ -1,4 +1,14 @@
-/******/ (function(modules) { // webpackBootstrap
+(function webpackUniversalModuleDefinition(root, factory) {
+	if(typeof exports === 'object' && typeof module === 'object')
+		module.exports = factory();
+	else if(typeof define === 'function' && define.amd)
+		define("saltFetch", [], factory);
+	else if(typeof exports === 'object')
+		exports["saltFetch"] = factory();
+	else
+		root["saltFetch"] = factory();
+})(this, function() {
+return /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
 /******/ 	var installedModules = {};
 
@@ -44,8 +54,14 @@
 /* 0 */
 /***/ function(module, exports, __webpack_require__) {
 
-let salt = window.salt = window.salt || {};
+var salt = window.salt = window.salt || {};
 salt.fetch = __webpack_require__(1);
+salt.storage = __webpack_require__(2);
+
+module.exports = {
+    fetch: fetch,
+    storage: storage
+};
 
 /***/ },
 /* 1 */
@@ -55,11 +71,11 @@ salt.fetch = __webpack_require__(1);
 	if(true)
 		module.exports = factory(__webpack_require__(2));
 	else if(typeof define === 'function' && define.amd)
-		define("NattyFetch", ["natty-storage"], factory);
+		define("nattyFetch", ["natty-storage"], factory);
 	else if(typeof exports === 'object')
-		exports["NattyFetch"] = factory(require("natty-storage"));
+		exports["nattyFetch"] = factory(require("natty-storage"));
 	else
-		root["NattyFetch"] = factory(root["NattyStorage"]);
+		root["nattyFetch"] = factory(root["nattyStorage"]);
 })(this, function(__WEBPACK_EXTERNAL_MODULE_2__) {
 return /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
@@ -121,12 +137,18 @@ var _createClass = (function () { function defineProperties(target, props) { for
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
 
-var NattyStorage = __webpack_require__(2);
+var nattyStorage = __webpack_require__(2);
 
-var Defer = __webpack_require__(3);
-var ajax = __webpack_require__(4);
-var jsonp = __webpack_require__(6);
-var util = __webpack_require__(5);
+if (nattyStorage === undefined) {
+    console.warn('Please install the `natty-storage` script which is required by `natty-fetch`, go on with' + ' https://www.npmjs.com/package/natty-storage');
+}
+
+// 下面两个配置了webpack的alias
+var ajax = __webpack_require__(3);
+var jsonp = __webpack_require__(5);
+
+var Defer = __webpack_require__(6);
+var util = __webpack_require__(4);
 var event = __webpack_require__(7);
 
 // 内置插件
@@ -139,13 +161,13 @@ var isAbsoluteUrl = util.isAbsoluteUrl;
 var isRelativeUrl = util.isRelativeUrl;
 var noop = util.noop;
 var isBoolean = util.isBoolean;
-var isNumber = util.isNumber;
 var isArray = util.isArray;
 var isFunction = util.isFunction;
 var sortPlainObjectKey = util.sortPlainObjectKey;
 var isEmptyObject = util.isEmptyObject;
 var isPlainObject = util.isPlainObject;
 var dummyPromise = util.dummyPromise;
+var isString = util.isString;
 
 var NULL = null;
 var EMPTY = '';
@@ -159,7 +181,7 @@ var defaultGlobalConfig = {
     data: {},
 
     // 请求完成钩子函数
-    didRequest: noop,
+    didFetch: noop,
 
     // 预处理回调
     fit: noop,
@@ -212,44 +234,78 @@ var defaultGlobalConfig = {
     // 是否在`url`上添加时间戳, 用于避免浏览器的304缓存
     urlStamp: TRUE,
 
+    // TODO 文档中没有暴露
     withCredentials: NULL,
 
     // 请求之前调用的钩子函数
-    willRequest: noop,
+    willFetch: noop,
 
     // 扩展: storage
     storage: false,
 
-    // plugin
+    // 插件
+    // 目前只支持两种插件
+    // plugins: [
+    //     nattyFetch.plugin.loop
+    //     nattyFetch.plugin.soon
+    // ]
     plugins: false
 };
 
 var runtimeGlobalConfig = extend({}, defaultGlobalConfig);
 
-var blackListForApiOptions = [];
-
-var DB = (function () {
-    // TODO 检查参数合法性
-
-    function DB(name, APIs, context) {
-        _classCallCheck(this, DB);
+var API = (function () {
+    function API(path, options, contextConfig, contextId) {
+        _classCallCheck(this, API);
 
         var t = this;
-        t.context = context;
+        t.contextConfig = contextConfig;
+        t._path = path;
 
-        t.cache = {};
-        t.name = name;
+        var config = t.config = t.processAPIOptions(options);
 
-        for (var API in APIs) {
-            t[API] = t.createAPI(extend({
-                DBName: name,
-                API: API
-            }, runAsFn(APIs[API])));
+        /**
+         * 一个`DB`的`api`的实现
+         * @param data {Object|Function}
+         * @returns {Object} Promise Object
+         */
+        t.api = function (data) {
+            data = data || {};
+            // 是否忽略自身的并发请求
+            if (config.ignoreSelfConcurrent && t.api.pending) {
+                return dummyPromise;
+            }
+
+            if (config.overrideSelfConcurrent && config._lastRequester) {
+                config._lastRequester.abort();
+                delete config._lastRequester;
+            }
+
+            var vars = t.makeVars(data);
+
+            if (config.retry === 0) {
+                return t.request(vars, config);
+            } else {
+                return t.tryRequest(vars, config);
+            }
+        };
+
+        t.api.contextId = contextId;
+        t.api._path = path;
+
+        // 标记是否正在等待请求返回
+        t.api.pending = FALSE;
+
+        t.api.config = config;
+
+        t.initStorage();
+
+        // 启动插件
+        var plugins = isArray(options.plugins) ? options.plugins : [];
+        for (var i = 0, l = plugins.length; i < l; i++) {
+            plugins[i].call(t, t.api);
         }
     }
-
-    // 设计说明：
-    //  1 jsonp不是"数据类型" 但很多人沟通时不经意使用"数据类型"这个词 因为jQuery/zepto的配置就是使用`dataType: 'jsonp'`
 
     /**
      * 关键词
@@ -259,35 +315,52 @@ var DB = (function () {
      *     底层隔离的
      */
 
-    /**
-     * 处理API的配置
-     * @param options {Object}
-     */
+    _createClass(API, [{
+        key: 'makeVars',
+        value: function makeVars(data) {
+            var t = this;
+            var config = t.config;
 
-    _createClass(DB, [{
+            // 一次请求的私有相关数据
+            var vars = {
+                mark: {
+                    __api: t._path
+                }
+            };
+
+            if (config.mock) {
+                vars.mark.__mock = TRUE;
+            }
+
+            if (config.urlStamp) {
+                vars.mark.__stamp = +new Date();
+            }
+
+            // `data`必须在请求发生时实时创建
+            data = extend({}, config.data, runAsFn(data));
+
+            // 将数据参数存在私有标记中, 方便API的`process`方法内部使用
+            vars.data = data;
+
+            return vars;
+        }
+
+        /**
+         * 处理API的配置
+         * @param options {Object}
+         */
+    }, {
         key: 'processAPIOptions',
         value: function processAPIOptions(options) {
 
             var t = this;
-            var config = extend({}, t.context, options);
-
-            // 过滤掉接口的黑名单配置
-            //each(blackListForApiOptions, (option) => {
-            //    delete  config[option];
-            //});
-
-            // 标记是否正在等待请求返回
-            //C.log('init pending value')
-            config.pending = FALSE;
+            var config = extend({}, t.contextConfig, options);
 
             if (config.mock) {
-                // dip平台强制使用`GET`方式, 因为不支持`GET`以外的类型
-                // TODO 是否拿出去? 和dip平台耦合了
-                // config.method = 'GET';
-                config.mockUrl = t.getFullUrl(config.mockUrl, TRUE);
+                config.mockUrl = t.getFullUrl(config);
             }
 
-            config.url = t.getFullUrl(options.url);
+            config.url = t.getFullUrl(config);
 
             // 按照[boolean, callbackKeyWord, callbackFunctionName]格式处理
             if (isArray(options.jsonp)) {
@@ -305,11 +378,20 @@ var DB = (function () {
                 config.jsonp = TRUE;
             }
 
+            return config;
+        }
+    }, {
+        key: 'initStorage',
+        value: function initStorage() {
+            var t = this;
+            var config = t.config;
+
             // 开启`storage`的前提条件
             var storagePrecondition = config.method === 'GET' || config.jsonp;
 
+            // 不满足`storage`使用条件的情况下, 开启`storage`将抛出错误
             if (!storagePrecondition && config.storage === TRUE) {
-                throw new Error('A `' + config.method + '` request CAN NOT use `storage` which is only for `GET/jsonp` request! Please check the options for `' + config.DBName + '.' + config.API + '`');
+                throw new Error('A `' + config.method + '` request CAN NOT use `storage` which is only for `GET/jsonp`' + ' request! Please check the options for `' + t._path + '`');
             }
 
             // 简易开启缓存的写法
@@ -318,89 +400,19 @@ var DB = (function () {
             }
 
             // 决定什么情况下缓存可以开启
-            config.storageUseable = isPlainObject(config.storage) && (config.method === 'GET' || config.jsonp) && NattyStorage.support[config.storage.type || 'localStorage'];
+            t.api.storageUseable = isPlainObject(config.storage) && (config.method === 'GET' || config.jsonp) && nattyStorage.support[config.storage.type || 'localStorage'];
 
             // 创建缓存实例
-            if (config.storageUseable) {
-                config.storage = new NattyStorage(extend({
-                    key: config.method + ' ' + config.DBName + '.' + config.API
-                }, config.storage));
-            }
-
-            return config;
-        }
-
-        /**
-         * 创建一个`api`方法
-         * @param options {Object} 一个`DB`的`api`的配置参数
-         * @returns {Function} `api`方法
-         * @note 一个`DB`对应若干个`api`函数
-         * @note 一个api的构成如下:
-         *    api.config {Object}
-         *    api.looping {Boolean}
-         *    api.startLoop {Function}
-         *    api.stopLoop {Function}
-         */
-    }, {
-        key: 'createAPI',
-        value: function createAPI(options) {
-            var t = this;
-            var config = t.processAPIOptions(options);
-
-            /**
-             * 一个`DB`的`api`的实现
-             * @param data {Object|Function}
-             * @returns {Object} Promise Object
-             */
-            var api = function api(data) {
-                // 是否忽略自身的并发请求
-                if (config.ignoreSelfConcurrent && config.pending) {
-                    return dummyPromise;
-                }
-
-                if (config.overrideSelfConcurrent && config._lastRequester) {
-                    config._lastRequester.abort();
-                    delete config._lastRequester;
-                }
-
-                // 一次请求的私有相关数据
-                var vars = {
-                    mark: {
-                        __api: t.name + '.' + config.API
-                    }
-                };
-
-                if (config.mock) {
-                    vars.mark.__mock = true;
-                }
-
-                // `data`必须在请求发生时实时创建
-                data = extend({}, config.data, runAsFn(data));
-
-                // 将数据参数存在私有标记中, 方便API的`process`方法内部使用
-                vars.data = data;
-
-                return t.fetch(vars, config);
-            };
-
-            api.config = config;
-
-            // 启动插件
-            var plugins = isArray(options.plugins) ? options.plugins : [];
-            for (var i = 0, l = plugins.length; i < l; i++) {
-                plugins[i].call(t, api);
-            }
-
-            return api;
-        }
-    }, {
-        key: 'fetch',
-        value: function fetch(vars, config) {
-            var t = this;
-            if (config.retry === 0) {
-                return t.request(vars, config);
-            } else {
-                return t.tryRequest(vars, config);
+            if (t.api.storageUseable) {
+                // `key`和`id`的选择原则:
+                // `key`只选用相对稳定的值, 减少因为`key`的改变而增加的残留缓存
+                // 经常变化的值用于`id`, 如一个接口在开发过程中可能使用方式不一样, 会在`jsonp`和`get`之间切换。
+                t.api.storage = nattyStorage(extend({
+                    key: [t.api.contextId, t._path].join('_')
+                }, config.storage, {
+                    async: TRUE,
+                    id: [config.storage.id, config.jsonp ? 'jsonp' : config.method, config.url].join('_') // 使用者的`id`和内部的`id`, 要同时生效
+                }));
             }
         }
 
@@ -416,16 +428,16 @@ var DB = (function () {
             var t = this;
 
             return new Promise(function (resolve, reject) {
-                if (config.storageUseable) {
+                if (t.api.storageUseable) {
 
                     // 只有GET和JSONP才会有storage生效
                     vars.queryString = isEmptyObject(vars.data) ? 'no-query-string' : JSON.stringify(sortPlainObjectKey(vars.data));
 
-                    config.storage.has(vars.queryString).then(function (data) {
+                    t.api.storage.has(vars.queryString).then(function (data) {
                         // console.warn('has cached: ', hasValue);
                         if (data.has) {
-                            // 调用 willRequest 钩子
-                            config.willRequest(vars, config, 'storage');
+                            // 调用 willFetch 钩子
+                            config.willFetch(vars, config, 'storage');
                             return data.value;
                         } else {
                             return t.remoteRequest(vars, config);
@@ -447,33 +459,33 @@ var DB = (function () {
 
         /**
          * 获取正式接口的完整`url`
-         * @param url {String}
-         * @param isMock {Boolean} 是否是`mock`模式
+         * @param config {Object}
          */
     }, {
         key: 'getFullUrl',
-        value: function getFullUrl(url, isMock) {
+        value: function getFullUrl(config) {
+            var url = config.mock ? config.mockUrl : config.url;
             if (!url) return EMPTY;
-            var prefixKey = isMock ? 'mockUrlPrefix' : 'urlPrefix';
-            return this.context[prefixKey] && !isAbsoluteUrl(url) && !isRelativeUrl(url) ? this.context[prefixKey] + url : url;
+            var prefixKey = config.mock ? 'mockUrlPrefix' : 'urlPrefix';
+            return config[prefixKey] && !isAbsoluteUrl(url) && !isRelativeUrl(url) ? config[prefixKey] + url : url;
         }
 
         /**
-            * 发起网络请求
-            * @param vars
-            * @param config
-            * @returns {Promise}
-            */
+         * 发起网络请求
+         * @param vars
+         * @param config
+         * @returns {Promise}
+         */
     }, {
         key: 'remoteRequest',
         value: function remoteRequest(vars, config) {
             var t = this;
 
-            // 调用 willRequest 钩子
-            config.willRequest(vars, config, 'remote');
+            // 调用 willFetch 钩子
+            config.willFetch(vars, config, 'remote');
 
             // 等待状态在此处开启 在相应的`requester`的`complete`回调中关闭
-            config.pending = TRUE;
+            t.api.pending = TRUE;
 
             var defer = new Defer();
 
@@ -495,7 +507,7 @@ var DB = (function () {
             // 超时处理
             if (0 !== config.timeout) {
                 setTimeout(function () {
-                    if (config.pending && vars.requester) {
+                    if (t.api.pending && vars.requester) {
                         // 取消请求
                         vars.requester.abort();
                         delete vars.requester;
@@ -505,10 +517,10 @@ var DB = (function () {
                         };
                         defer.reject(error);
                         event.fire('g.reject', [error, config]);
-                        event.fire(config._contextId + '.reject', [error, config]);
+                        event.fire(t.api.contextId + '.reject', [error, config]);
 
-                        // 调用 didRequest 钩子
-                        config.didRequest(vars, config);
+                        // 调用 didFetch 钩子
+                        config.didFetch(vars, config);
                     }
                 }, config.timeout);
             }
@@ -534,7 +546,7 @@ var DB = (function () {
                     t.request(vars, config).then(function (content) {
                         resolve(content);
                         event.fire('g.resolve', [content, config], config);
-                        event.fire(config._contextId + '.resolve', [content, config], config);
+                        event.fire(t.api.contextId + '.resolve', [content, config], config);
                     }, function (error) {
                         if (retryTime === config.retry) {
                             reject(error);
@@ -560,8 +572,8 @@ var DB = (function () {
         value: function processResponse(vars, config, defer, response) {
             var t = this;
 
-            // 调用 didRequest 钩子函数
-            config.didRequest(vars, config);
+            // 调用 didFetch 钩子函数
+            config.didFetch(vars, config);
 
             // 非标准格式数据的预处理
             response = config.fit(response, vars);
@@ -574,11 +586,11 @@ var DB = (function () {
                     var resolveDefer = function resolveDefer() {
                         defer.resolve(content);
                         event.fire('g.resolve', [content, config], config);
-                        event.fire(config._contextId + '.resolve', [content, config], config);
+                        event.fire(t.api.contextId + '.resolve', [content, config], config);
                     };
 
-                    if (config.storageUseable) {
-                        config.storage.set(vars.queryString, content).then(function () {
+                    if (t.api.storageUseable) {
+                        t.api.storage.set(vars.queryString, content).then(function () {
                             resolveDefer();
                         })['catch'](function (e) {
                             resolveDefer();
@@ -589,12 +601,12 @@ var DB = (function () {
                 })();
             } else {
                 var error = extend({
-                    message: 'Processing Failed: ' + config.DBName + '.' + config.API
+                    message: 'Processing Failed: ' + t._path
                 }, response.error);
                 // NOTE response是只读的对象!!!
                 defer.reject(error);
                 event.fire('g.reject', [error, config]);
-                event.fire(config._contextId + '.reject', [error, config]);
+                event.fire(t.api.contextId + '.reject', [error, config]);
             }
         }
 
@@ -652,7 +664,7 @@ var DB = (function () {
                     if (vars.retryTime === undefined || vars.retryTime === config.retry) {
                         //C.log('ajax complete');
 
-                        config.pending = FALSE;
+                        t.api.pending = FALSE;
                         vars.requester = NULL;
 
                         // 如果只响应最新请求
@@ -698,7 +710,7 @@ var DB = (function () {
                 },
                 complete: function complete() {
                     if (vars.retryTime === undefined || vars.retryTime === config.retry) {
-                        config.pending = FALSE;
+                        t.api.pending = FALSE;
                         vars.requester = NULL;
 
                         // 如果只响应最新请求
@@ -706,82 +718,95 @@ var DB = (function () {
                             delete config._lastRequester;
                         }
                     }
-                    //console.log('complete: pending:', config.pending);
                 }
             });
         }
     }]);
 
-    return DB;
+    return API;
 })();
 
-var Context = (function () {
-    /**
-     * @param options 一个DB实例的通用配置
-     */
+var context = (function () {
+    var count = 0;
 
-    function Context(options) {
-        _classCallCheck(this, Context);
+    return function (contextId, options) {
 
-        var t = this;
-        options = options || {};
-        var contextId = 'c' + Context.count++;
-        t.contextId = contextId;
+        if (isString(contextId)) {
+            options = options || {};
+        } else {
+            options = contextId || {};
+            contextId = 'c' + count++;
+        }
 
-        t.config = extend({}, runtimeGlobalConfig, options, {
-            _contextId: contextId
+        var storage = nattyStorage({
+            type: 'variable',
+            key: contextId
         });
-    }
 
-    // 用于给DB上下文命名
-    // 如: 第一个和第二个上下文的`resolve`的事件 在event中的记录分别是:
-    //     c1.resolve
-    //     c2.resolve
+        var ctx = {};
 
-    /**
-     * 创建一个`DB`
-     * @param DBName {String} `DB`的名称 不可重复
-     * @param APIs {Object} 该`DB`下的`api`配置
-     * @returns {Object} 返回创建好的`DB`实例
-     */
+        ctx.api = storage.get();
 
-    _createClass(Context, [{
-        key: 'create',
-        value: function create(DBName, APIs) {
-            var t = this;
-            // NOTE 强制不允许重复的DB名称
-            if (t[DBName]) {
-                throw new Error('DB: "' + DBName + '" is existed! ');
-                return;
+        ctx._contextId = contextId;
+
+        ctx._config = extend({}, runtimeGlobalConfig, options);
+
+        /**
+         * 创建api
+         * @param namespace {String} optional
+         * @param APIs {Object} 该`namespace`下的`api`配置
+         */
+        ctx.create = function (namespace, APIs) {
+            var hasNamespace = arguments.length === 2 && isString(namespace);
+
+            if (!hasNamespace) {
+                APIs = namespace;
             }
 
-            return t[DBName] = new DB(DBName, APIs, t.config);
-        }
+            for (var path in APIs) {
+                storage.set(hasNamespace ? namespace + '.' + path : path, new API(hasNamespace ? namespace + '.' + path : path, runAsFn(APIs[path]), ctx._config, contextId).api);
+            }
+
+            ctx.api = storage.get();
+        };
 
         // 绑定上下文事件
-    }, {
-        key: 'on',
-        value: function on(name, fn) {
+        ctx.on = function (name, fn) {
             if (!isFunction(fn)) return;
-            event.on(this.contextId + '.' + name, fn);
-            return this;
-        }
-    }]);
+            event.on(ctx._contextId + '.' + name, fn);
+            return ctx;
+        };
 
-    return Context;
+        return ctx;
+    };
 })();
 
-Context.count = 0;
-
 var VERSION = undefined;
-(VERSION = "1.1.0-rc3");
+(VERSION = "2.0.0");
 
-var NattyDB = {
-    onlyForHTML5: TRUE,
+var ONLY_FOR_MODERN_BROWSER = undefined;
+(ONLY_FOR_MODERN_BROWSER = true);
+
+/**
+ * 简易接口
+ * @param options
+ * @note 这个接口尝试做过共享`api`实例, 但是结果证明不现实, 不科学, 不要再尝试了!
+ *       因为无法共享实例, 所以有些功能是不支持的:
+ *       - ignoreSelfConcurrent
+ *       - overrideSelfConcurrent
+ *       - 所有缓存相关的功能
+ */
+var nattyFetch = function nattyFetch(options) {
+    return new API('nattyFetch', runAsFn(options), defaultGlobalConfig, 'global').api();
+};
+
+extend(nattyFetch, {
+    onlyForModern: ONLY_FOR_MODERN_BROWSER,
     version: VERSION,
-    Context: Context,
+    // Context,
     _util: util,
     _event: event,
+    context: context,
     ajax: ajax,
     jsonp: jsonp,
 
@@ -809,16 +834,20 @@ var NattyDB = {
         event.on('g.' + name, fn);
         return this;
     },
+
+    /**
+     * 插件名称空间
+     */
     plugin: {
         loop: pluginLoop,
         soon: pluginSoon
     }
-};
+});
 
 // 内部直接将运行时的全局配置初始化到默认值
-NattyDB.setGlobal(defaultGlobalConfig);
+nattyFetch.setGlobal(defaultGlobalConfig);
 
-module.exports = NattyDB;
+module.exports = nattyFetch;
 
 /***/ },
 /* 2 */
@@ -828,30 +857,10 @@ module.exports = __WEBPACK_EXTERNAL_MODULE_2__;
 
 /***/ },
 /* 3 */
-/***/ function(module, exports) {
-
-"use strict";
-
-function Defer() {
-  var t = this;
-  t.promise = new Promise(function (resolve, reject) {
-    t._resolve = resolve;
-    t._reject = reject;
-  });
-}
-Defer.prototype.resolve = function (value) {
-  this._resolve.call(this.promise, value);
-};
-Defer.prototype.reject = function (reason) {
-  this._reject.call(this.promise, reason);
-};
-module.exports = Defer;
-
-/***/ },
-/* 4 */
 /***/ function(module, exports, __webpack_require__) {
 
 /**
+ * file: ajax.js
  * ref https://xhr.spec.whatwg.org
  * ref https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest
  * ref https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest/Using_XMLHttpRequest
@@ -862,7 +871,7 @@ module.exports = Defer;
  */
 'use strict';
 
-var _require = __webpack_require__(5);
+var _require = __webpack_require__(4);
 
 var extend = _require.extend;
 var appendQueryString = _require.appendQueryString;
@@ -1012,7 +1021,6 @@ var defaultOptions = {
     data: null,
     header: {},
     withCredentials: NULL, // 根据`url`是否跨域决定默认值. 如果显式配置该值(必须是布尔值), 则个使用配置值
-    cache: true,
     success: noop,
     error: noop,
     complete: noop,
@@ -1038,7 +1046,7 @@ var ajax = function ajax(options) {
 
     setEvents(xhr, options);
 
-    xhr.open(options.method, appendQueryString(options.url, extend({}, options.mark, options.method === GET ? options.data : {}), options.cache, options.traditional));
+    xhr.open(options.method, appendQueryString(options.url, extend({}, options.mark, options.method === GET ? options.data : {}), options.traditional));
 
     // NOTE 生产环境的Server端, `Access-Control-Allow-Origin`的值一定不要配置成`*`!!! 而且`Access-Control-Allow-Credentials`应该是true!!!
     // NOTE 如果Server端的`responseHeader`配置了`Access-Control-Allow-Origin`的值是通配符`*` 则前端`withCredentials`是不能使用true值的
@@ -1070,7 +1078,7 @@ ajax.supportCORS = supportCORS;
 module.exports = ajax;
 
 /***/ },
-/* 5 */
+/* 4 */
 /***/ function(module, exports, __webpack_require__) {
 
 'use strict';
@@ -1083,6 +1091,7 @@ var toString = Object.prototype.toString;
 var ARRAY_TYPE = '[object Array]';
 var OBJECT_TYPE = '[object Object]';
 var TRUE = true;
+var FALSE = !TRUE;
 
 /**
  * 伪造的`promise`对象
@@ -1147,6 +1156,11 @@ var isRelativeUrl = function isRelativeUrl(url) {
 var BOOLEAN = 'boolean';
 var isBoolean = function isBoolean(v) {
     return typeof v === BOOLEAN;
+};
+
+var STRING = 'string';
+var isString = function isString(v) {
+    return typeof v === STRING;
 };
 
 var FUNCTION = 'function';
@@ -1248,18 +1262,25 @@ var isCrossDomain = function isCrossDomain(url) {
  * @param  {Object} supplier
  * @return {Object} 扩展后的receiver对象
  * @note 这个extend方法是定制的, 不要拷贝到其他地方用!!!
+ * @note 这个extend方法是深拷贝方式的!!!
+ * TODO
  */
 var extend = function extend() {
     var receiver = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
     var supplier = arguments.length <= 1 || arguments[1] === undefined ? {} : arguments[1];
+    var deepCopy = arguments.length <= 2 || arguments[2] === undefined ? FALSE : arguments[2];
 
     for (var key in supplier) {
         // `supplier`中不是未定义的键 都可以执行扩展
         if (supplier.hasOwnProperty(key) && supplier[key] !== undefined) {
-            if (isArray(supplier[key])) {
-                receiver[key] = [].concat(supplier[key]);
-            } else if (isPlainObject(supplier[key])) {
-                receiver[key] = extend({}, supplier[key]);
+            if (deepCopy === TRUE) {
+                if (isArray(supplier[key])) {
+                    receiver[key] = [].concat(supplier[key]);
+                } else if (isPlainObject(supplier[key])) {
+                    receiver[key] = extend({}, supplier[key]);
+                } else {
+                    receiver[key] = supplier[key];
+                }
             } else {
                 receiver[key] = supplier[key];
             }
@@ -1371,12 +1392,7 @@ var decodeParam = function decodeParam(str) {
 };
 
 // 给URL追加查询字符串
-var appendQueryString = function appendQueryString(url, obj, cache, traditional) {
-    // 是否追加noCache参数
-    // if (!cache) {
-    //     obj.__noCache = makeRandom();
-    // }
-
+var appendQueryString = function appendQueryString(url, obj, traditional) {
     var queryString = param(obj, traditional);
 
     if (queryString) {
@@ -1402,6 +1418,7 @@ module.exports = {
     isNumber: isNumber,
     isPlainObject: isPlainObject,
     isRelativeUrl: isRelativeUrl,
+    isString: isString,
     makeRandom: makeRandom,
     noop: noop,
     sortPlainObjectKey: sortPlainObjectKey,
@@ -1410,14 +1427,14 @@ module.exports = {
 };
 
 /***/ },
-/* 6 */
+/* 5 */
 /***/ function(module, exports, __webpack_require__) {
 
 'use strict';
 
 function _defineProperty(obj, key, value) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
 
-var _require = __webpack_require__(5);
+var _require = __webpack_require__(4);
 
 var appendQueryString = _require.appendQueryString;
 var noop = _require.noop;
@@ -1457,7 +1474,6 @@ var defaultOptions = {
     url: '',
     mark: {},
     data: {},
-    cache: true,
     success: noop,
     error: noop,
     complete: noop,
@@ -1492,7 +1508,7 @@ var jsonp = function jsonp(options) {
     };
 
     // 生成`url`
-    var url = appendQueryString(options.url, extend(_defineProperty({}, options.flag, callbackName), options.mark, options.data), options.cache, options.traditional);
+    var url = appendQueryString(options.url, extend(_defineProperty({}, options.flag, callbackName), options.mark, options.data), options.traditional);
 
     // 插入脚本
     script = insertScript(url, options);
@@ -1509,6 +1525,27 @@ var jsonp = function jsonp(options) {
 };
 
 module.exports = jsonp;
+
+/***/ },
+/* 6 */
+/***/ function(module, exports) {
+
+"use strict";
+
+function Defer() {
+  var t = this;
+  t.promise = new Promise(function (resolve, reject) {
+    t._resolve = resolve;
+    t._reject = reject;
+  });
+}
+Defer.prototype.resolve = function (value) {
+  this._resolve.call(this.promise, value);
+};
+Defer.prototype.reject = function (reason) {
+  this._reject.call(this.promise, reason);
+};
+module.exports = Defer;
 
 /***/ },
 /* 7 */
@@ -1578,7 +1615,7 @@ var FALSE = false;
 var TRUE = true;
 var NULL = null;
 
-var _require = __webpack_require__(5);
+var _require = __webpack_require__(4);
 
 var isNumber = _require.isNumber;
 var noop = _require.noop;
@@ -1629,7 +1666,7 @@ module.exports = function (api) {
 var FALSE = false;
 var TRUE = true;
 
-var _require = __webpack_require__(5);
+var _require = __webpack_require__(4);
 
 var noop = _require.noop;
 var isEmptyObject = _require.isEmptyObject;
@@ -1657,53 +1694,39 @@ module.exports = function (api) {
         }
 
         // 一次请求的私有相关数据
-        var vars = {
-            mark: {
-                __api: t.name + '.' + config.API
-            }
-        };
+        var vars = t.makeVars(data);
 
-        if (config.mock) {
-            vars.mark.__mock = true;
-        }
-
-        // `data`必须在请求发生时实时创建
-        data = extend({}, config.data, runAsFn(data));
-
-        // 将数据参数存在私有标记中, 方便API的`process`方法内部使用
-        vars.data = data;
-
-        if (config.storageUseable) {
+        if (api.storageUseable) {
 
             // 只有GET和JSONP才会有storage生效
             vars.queryString = isEmptyObject(vars.data) ? 'no-query-string' : JSON.stringify(sortPlainObjectKey(vars.data));
 
-            config.storage.has(vars.queryString).then(function (data) {
+            api.storage.has(vars.queryString).then(function (result) {
                 // console.warn('has cached: ', hasValue);
-                if (data.has) {
-                    // 调用 willRequest 钩子
-                    config.willRequest(vars, config, 'storage');
+                if (result.has) {
+                    // 调用 willFetch 钩子
+                    config.willFetch(vars, config, 'storage');
                     successFn({
                         fromStorage: TRUE,
-                        data: data.value
+                        content: result.value
                     });
                 }
 
                 // 在`storage`可用的情况下, 远程请求返回的数据会同步到`storage`
                 return t.remoteRequest(vars, config);
-            }).then(function (data) {
+            }).then(function (content) {
                 successFn({
                     fromStorage: FALSE,
-                    data: data
+                    content: content
                 });
             })['catch'](function (e) {
                 errorFn(e);
             });
         } else {
-            t.remoteRequest(vars, config).then(function (data) {
+            t.remoteRequest(vars, config).then(function (content) {
                 successFn({
                     fromStorage: FALSE,
-                    data: data
+                    content: content
                 });
             })['catch'](function (e) {
                 errorFn(e);
@@ -1725,11 +1748,11 @@ module.exports = function (api) {
 	if(true)
 		module.exports = factory();
 	else if(typeof define === 'function' && define.amd)
-		define("NattyStorage", [], factory);
+		define("nattyStorage", [], factory);
 	else if(typeof exports === 'object')
-		exports["NattyStorage"] = factory();
+		exports["nattyStorage"] = factory();
 	else
-		root["NattyStorage"] = factory();
+		root["nattyStorage"] = factory();
 })(this, function() {
 return /******/ (function(modules) { // webpackBootstrap
 /******/ 	// The module cache
@@ -1795,6 +1818,7 @@ var _require = __webpack_require__(2);
 
 var extend = _require.extend;
 var isPlainObject = _require.isPlainObject;
+var noop = _require.noop;
 
 var win = window;
 var hasWindow = 'undefined' !== typeof win;
@@ -1805,7 +1829,7 @@ var FALSE = !TRUE;
 var PLACEHOLDER = '_placeholder';
 
 var VERSION = undefined;
-(VERSION = "1.0.0-rc4");
+(VERSION = "1.0.0");
 
 var support = {
     localStorage: hasWindow && !!win.localStorage && test('localStorage'),
@@ -1837,44 +1861,48 @@ var defaultGlobalConfig = {
     duration: 0,
 
     // 有效期至, 时间戳
-    until: 0
+    until: 0,
+
+    // 是否以异步方式使用set/get/has/remove
+    async: false
 };
 
 // 运行时的全局配置
 var runtimeGlobalConfig = extend({}, defaultGlobalConfig);
 
 /**
- *  let ls = new NattyStorage({
+ *  let ls = new nattyStorage({
  *     type: 'localstorage', // sessionstorage, variable
  *       key: 'city',
  *       // 验证是否有效，如果是首次创建该LS，则不执行验证
- *       tag: '1.0'
+ *       id: '1.0'
  *  })
  */
 
-var NattyStorage = (function () {
+var Storage = (function () {
     /**
      * 构造函数
      * @param options
      */
 
-    function NattyStorage() {
+    function Storage() {
         var options = arguments.length <= 0 || arguments[0] === undefined ? {} : arguments[0];
 
-        _classCallCheck(this, NattyStorage);
+        _classCallCheck(this, Storage);
 
         var t = this;
 
         t.config = extend({}, runtimeGlobalConfig, options);
 
+        // 必须配置`key`!!! 无论什么类型!!!
         if (!t.config.key) {
-            throw new Error('`key` is missing, please check the options passed in `NattyStorage` constructor.');
+            throw new Error('`key` is missing, please check the options passed in `nattyStorage` constructor.');
         }
 
         t._storage = support[t.config.type] ? createStorage(t.config.type) : createVariable();
 
-        t._CHECK_KEY = 'NattyStorageCheck:' + t.config.key;
-        t._DATA_KEY = 'NattyStorageData:' + t.config.key;
+        t._CHECK_KEY = 'nattyStorageCheck:' + t.config.key;
+        t._DATA_KEY = 'nattyStorageData:' + t.config.key;
         t._placeholderUsed = FALSE;
 
         // 每个`storage`实例对象都是全新的, 只有`storage`实例的数据才可能是缓存的.
@@ -1887,7 +1915,7 @@ var NattyStorage = (function () {
      * @note 为什么要做惰性初始化, 因为
      */
 
-    _createClass(NattyStorage, [{
+    _createClass(Storage, [{
         key: '_lazyInit',
         value: function _lazyInit() {
             var t = this;
@@ -1915,7 +1943,7 @@ var NattyStorage = (function () {
 
             // 更新验证数据
             t._storage.set(t._CHECK_KEY, t._checkData = {
-                tag: t.config.tag,
+                id: t.config.id,
                 lastUpdate: t._createStamp,
                 duration: t.config.duration,
                 until: t.config.until
@@ -1930,7 +1958,7 @@ var NattyStorage = (function () {
         key: 'isOutdated',
         value: function isOutdated() {
             var t = this;
-            if (t.config.tag && t.config.tag !== t._checkData.tag) {
+            if (t.config.id && t.config.id !== t._checkData.id) {
                 return TRUE;
             }
 
@@ -1965,8 +1993,7 @@ var NattyStorage = (function () {
             var t = this;
             var argumentLength = arguments.length;
 
-            // 同步到storage
-            return new Promise(function (resolve, reject) {
+            var todo = function todo(resolve, reject) {
                 try {
                     if (!t._data) {
                         t._lazyInit();
@@ -1987,7 +2014,13 @@ var NattyStorage = (function () {
                 } catch (e) {
                     reject(e);
                 }
-            });
+            };
+
+            if (t.config.async) {
+                return new Promise(todo);
+            } else {
+                todo(noop, throwError);
+            }
         }
 
         /**
@@ -2003,9 +2036,9 @@ var NattyStorage = (function () {
         key: 'get',
         value: function get(path) {
             var t = this;
-            return new Promise(function (resolve, reject) {
+            var data = undefined;
+            var todo = function todo(resolve, reject) {
                 try {
-                    var data = undefined;
                     if (!t._data) {
                         t._lazyInit();
                     }
@@ -2021,7 +2054,14 @@ var NattyStorage = (function () {
                 } catch (e) {
                     reject(e);
                 }
-            });
+            };
+
+            if (t.config.async) {
+                return new Promise(todo);
+            } else {
+                todo(noop, throwError);
+                return data;
+            }
         }
 
         /**
@@ -2033,10 +2073,9 @@ var NattyStorage = (function () {
         key: 'has',
         value: function has(path) {
             var t = this;
-            return new Promise(function (resolve, reject) {
+            var result = undefined;
+            var todo = function todo(resolve, reject) {
                 try {
-                    var has = undefined;
-
                     if (!t._data) {
                         t._lazyInit();
                     }
@@ -2047,20 +2086,30 @@ var NattyStorage = (function () {
                             throw new Error('a `path` argument should be passed into the `has` method');
                         }
 
-                        resolve(hasValueByPath(path, t._data) ? {
+                        result = hasValueByPath(path, t._data) ? {
                             has: true,
                             value: getValueByPath(path, t._data)
-                        } : {});
+                        } : {};
+
+                        resolve(result);
                     } else {
-                        resolve(t._data.hasOwnProperty(PLACEHOLDER) ? {
+                        result = t._data.hasOwnProperty(PLACEHOLDER) ? {
                             has: true,
                             value: t._data[PLACEHOLDER]
-                        } : {});
+                        } : {};
+                        resolve(result);
                     }
                 } catch (e) {
                     reject(e);
                 }
-            });
+            };
+
+            if (t.config.async) {
+                return new Promise(todo);
+            } else {
+                todo(noop, throwError);
+                return result;
+            }
         }
 
         /**
@@ -2071,7 +2120,7 @@ var NattyStorage = (function () {
         key: 'remove',
         value: function remove(path) {
             var t = this;
-            return new Promise(function (resolve, reject) {
+            var todo = function todo(resolve, reject) {
                 try {
                     if (!t._data) {
                         t._lazyInit();
@@ -2087,7 +2136,13 @@ var NattyStorage = (function () {
                 } catch (e) {
                     reject(e);
                 }
-            });
+            };
+
+            if (t.config.async) {
+                return new Promise(todo);
+            } else {
+                todo(noop, throwError);
+            }
         }
 
         /**
@@ -2109,20 +2164,22 @@ var NattyStorage = (function () {
         }
     }]);
 
-    return NattyStorage;
+    return Storage;
 })();
 
-NattyStorage.version = VERSION;
-NattyStorage.support = {};
-NattyStorage.support.localStorage = support.localStorage;
-NattyStorage.support.sessionStorage = support.sessionStorage;
-NattyStorage._variable = {};
+var nattyStorage = function nattyStorage(options) {
+    return new Storage(options);
+};
+
+nattyStorage.version = VERSION;
+nattyStorage._variable = variable;
+nattyStorage.support = support;
 
 /**
  * 执行全局配置
  * @param options
  */
-NattyStorage.setGlobal = function (options) {
+nattyStorage.setGlobal = function (options) {
     runtimeGlobalConfig = extend({}, defaultGlobalConfig, options);
     return undefined;
 };
@@ -2132,12 +2189,15 @@ NattyStorage.setGlobal = function (options) {
  * @param property {String} optional
  * @returns {*}
  */
-NattyStorage.getGlobal = function (property) {
+nattyStorage.getGlobal = function (property) {
     return property ? runtimeGlobalConfig[property] : runtimeGlobalConfig;
 };
 
+function throwError(e) {
+    throw new Error(e);
+}
+
 function createStorage(storage) {
-    // TODO 降级到variable模式
     storage = win[storage];
     return {
         // NOTE  值为undefined的情况, JSON.stringify方法会将键删除
@@ -2162,8 +2222,9 @@ function createStorage(storage) {
     };
 }
 
+var variable = {};
 function createVariable() {
-    var storage = NattyStorage._variable;
+    var storage = variable;
     return {
         set: function set(key, value) {
             storage[key] = value;
@@ -2284,7 +2345,7 @@ function isEmptyPlainObject(v) {
     return ret;
 }
 
-module.exports = NattyStorage;
+module.exports = nattyStorage;
 
 /***/ },
 /* 2 */
@@ -2363,8 +2424,11 @@ var extend = function extend() {
 	return receiver;
 };
 
+var noop = function noop() {};
+
 module.exports = {
 	extend: redo(extend),
+	noop: noop,
 	isPlainObject: isPlainObject
 };
 
@@ -2374,4 +2438,6 @@ module.exports = {
 ;
 
 /***/ }
-/******/ ]);
+/******/ ])
+});
+;

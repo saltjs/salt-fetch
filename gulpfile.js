@@ -17,6 +17,8 @@ var uglify = require('gulp-uglify');
 // https://www.npmjs.com/package/del
 var del = require('del');
 
+var pump = require('pump');
+
 gulp.task('delete-dist-dir', function (cb) {
     del(['dist']).then(function () {
         cb();
@@ -29,12 +31,12 @@ function pack() {
             // 不要配置path，会报错
             //path: 'dist',
             filename: 'salt-fetch.js',
-            sourcePrefix: ''
+            sourcePrefix: '',
             // 下面三个配置项说明`webpack`的最佳实战是: 只设置唯一的`entry`, 正好和`gulp`的约定完美对接
             // NOTE: 如果需要构建`umd`模块，则这三个配置项必须同时使用：library, libraryTarget, umdNamedDefine
-            // library: 'SaltFetch',
-            // libraryTarget: 'umd',
-            // umdNamedDefine: true
+            library: 'saltFetch',
+            libraryTarget: 'umd',
+            umdNamedDefine: true
         },
         module: {
         },
@@ -47,11 +49,16 @@ gulp.task('pack', ['delete-dist-dir'], function() {
     return pack(false);
 });
 
-gulp.task('min', function () {
-    return gulp.src([
-        'dist/salt-fetch.js'
-    ]).pipe(uglify()).pipe(rename(function (path) {
-        console.log(path);
-        path.basename += '.min';
-    })).pipe(gulp.dest('./dist'));
+gulp.task('min', function (cb) {
+    pump([
+        gulp.src([
+            'dist/salt-fetch.js'
+        ]),
+        uglify(),
+        rename(function (path) {
+            console.log(path);
+            path.basename += '.min';
+        }),
+        gulp.dest('./dist')
+    ], cb);
 });
