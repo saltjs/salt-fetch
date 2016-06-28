@@ -55,12 +55,14 @@ return /******/ (function(modules) { // webpackBootstrap
 /***/ function(module, exports, __webpack_require__) {
 
 var salt = window.salt = window.salt || {};
-salt.fetch = __webpack_require__(1);
-salt.storage = __webpack_require__(2);
+var nattyFetch = __webpack_require__(1);
+var nattyStorage = __webpack_require__(2);
+salt.fetch = nattyFetch;
+salt.storage = nattyStorage;
 
 module.exports = {
-    fetch: fetch,
-    storage: storage
+    fetch: nattyFetch,
+    storage: nattyStorage
 };
 
 /***/ },

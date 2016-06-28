@@ -1,8 +1,10 @@
 var salt = window.salt = window.salt || {};
-salt.fetch = require('natty-fetch');
-salt.storage = require('natty-storage');
+var nattyFetch = require('natty-fetch');
+var nattyStorage = require('natty-storage');
+salt.fetch = nattyFetch;
+salt.storage = nattyStorage;
 
 module.exports = {
-    fetch: fetch,
-    storage: storage
+    fetch: nattyFetch,
+    storage: nattyStorage
 };
